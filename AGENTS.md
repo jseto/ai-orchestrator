@@ -120,7 +120,7 @@ worktree may have no dependencies installed.
 
 **This machine has a `post_create` hook configured** in the user-level
 `~/.config/treehouse/config.toml`, pointing at
-`/home/jseto/programming-projects/scripts/worktree-setup.sh`, which runs in each newly provisioned or reset
+`/home/jseto/programming-projects/ai-orchestrator/scripts/worktree-setup.sh`, which runs in each newly provisioned or reset
 worktree right before `get` hands it over:
 
 - picks the JS package manager by lockfile (`pnpm-lock.yaml` →
@@ -229,7 +229,7 @@ inside each project's worktree. In a main session, set this once and use the
 absolute directory:
 
 ```bash
-SCRIPTS=/home/jseto/programming-projects/scripts
+SCRIPTS=/home/jseto/programming-projects/ai-orchestrator/scripts
 ```
 
 | Script | Does |
@@ -381,6 +381,12 @@ equivalent: `tmux send-keys -t pi-main -l '…'` + `Enter`). The main session
 also polls `sub-status.sh <task>` for children that do not push. Treat the
 report file as the source of truth and the push as a notification.
 
+**Relay child completions immediately**: as soon as a `DONE:` / `BLOCKED:`
+notice arrives (or a poll shows a child finished — PR opened, tests green),
+report it to the user in the very next reply, unprompted: task, PR link, test
+status. Never sit on a finished-child report waiting for the user to ask
+"what's ready?".
+
 **5. Child pushes branch and creates the PR — never merge into `development`.**
 The child session itself pushes its branch (`git push -u origin task/<name>`) and opens a pull request against `development` using `gh pr create` as the final step of its work, including the PR link in its report and `DONE` notice. Never run `git merge` / `git cherry-pick` into `development` from the main checkout.
 Do **not** retire the child yet when the PR is open: the child stays alive until the PR is merged (step 6), so it can address review feedback, rebase against new `development`, or answer questions about the work.
@@ -392,6 +398,15 @@ disposing of or retiring any child, check whether its worktree has
 uncommitted, unpublished, or otherwise potentially lost changes. Notify the
 user if any such changes exist, and require the user's confirmation before
 force-discarding them.
+
+**Uncommitted changes are handled by instructing the child, not by force.**
+When a child returns (or is about to be retired) with uncommitted or
+unpublished changes in its worktree, the main session must not discard them
+and must not just ask the user what to do: send the child a follow-up
+instruction itself (`sub-send.sh <task> "..."`) telling it to commit, push,
+and open/complete its PR, then re-check. Only when the child genuinely
+cannot finish (or the user explicitly abandons the work) fall back to asking
+the user about `--force`.
 
 ```bash
 "$SCRIPTS/sub-retire.sh" fix-auth <repo>         # refuses lost work
