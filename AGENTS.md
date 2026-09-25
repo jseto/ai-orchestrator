@@ -319,13 +319,16 @@ while the orchestrator is driving it. **The main session's tmux pane/window must
 
 > **Name the orchestrator `pi-main` — child notices are addressed to it.**
 > Children push reports with `sub-report.sh`, which defaults to
-> `MAIN_SESSION=pi-main`; if the main session has a different name (e.g. tmux
-> auto-named it `3`), those notices are delivered nowhere useful and the
-> orchestrator silently misses them (polling `sub-status.sh` still works).
-> At startup, check with `tmux display-message -p '#S'`; if it is not
-> `pi-main`, rename it (`tmux rename-session -t <current> pi-main`, which does
-> not detach anyone) or export `MAIN_SESSION=<current>` before spawning
-> children.
+> `MAIN_SESSION=pi-main`. The helper sends to the active pane using the exact
+> tmux target `=pi-main:`; `=pi-main` alone works for `has-session` but is not a
+> valid pane target for `send-keys`. If the main session has a different name
+> (e.g. tmux auto-named it `3`), export `MAIN_SESSION=<current>` before
+> spawning children or rename it (`tmux rename-session -t <current> pi-main`,
+> which does not detach anyone). When `MAIN_SESSION` was not explicitly set,
+> `sub-spawn.sh` also prefers the invoking session when its pane is running
+> `pi`, avoiding a stale default `pi-main` shell. At startup, verify with
+> `tmux display-message -p '#S'`; polling `sub-status.sh` and reading the
+> durable report remain the fallback if a live notice cannot be delivered.
 
 **1. Spawn a child session with a task:**
 

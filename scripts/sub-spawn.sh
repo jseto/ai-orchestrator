@@ -11,18 +11,20 @@ source "$SCRIPT_DIR/_sub-common.sh"
 # remains stable even after the new pane becomes the window's active pane.
 INVOKING_PANE=$(invoking_tmux_pane)
 INVOKING_SESSION=""
+INVOKING_COMMAND=""
 if [ -n "$INVOKING_PANE" ]; then
   INVOKING_SESSION=$(tmux display-message -p -t "$INVOKING_PANE" '#S' 2>/dev/null || true)
+  INVOKING_COMMAND=$(tmux display-message -p -t "$INVOKING_PANE" '#{pane_current_command}' 2>/dev/null || true)
 fi
 
-# If the default orchestrator session is absent, report to the tmux session
-# that invoked this script. An explicitly configured MAIN_SESSION always wins.
+# Prefer the live Pi session that invoked this script when the default
+# pi-main name is stale or the current orchestrator was auto-named by tmux.
+# An explicitly configured MAIN_SESSION always wins.
 if [ -z "${_SUB_MAIN_SESSION_WAS_SET:-}" ] \
-   && ! tmux has-session -t "=$MAIN_SESSION" 2>/dev/null; then
-  if [ -n "$INVOKING_SESSION" ] \
-     && tmux has-session -t "=$INVOKING_SESSION" 2>/dev/null; then
-    MAIN_SESSION=$INVOKING_SESSION
-  fi
+   && [ -n "$INVOKING_SESSION" ] \
+   && tmux has-session -t "=$INVOKING_SESSION" 2>/dev/null \
+   && { ! tmux has-session -t "=$MAIN_SESSION" 2>/dev/null || [ "$INVOKING_COMMAND" = pi ]; }; then
+  MAIN_SESSION=$INVOKING_SESSION
 fi
 # Keep the original pane as the notice target when it belongs to the selected
 # session. An explicitly configured MAIN_PANE always wins.

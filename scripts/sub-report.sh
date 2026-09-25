@@ -25,7 +25,10 @@ if ! tmux has-session -t "=$MAIN_SESSION" 2>/dev/null; then
   exit 0
 fi
 
-TARGET="=$MAIN_SESSION"
+# send-keys targets panes, so make the exact session target explicit by
+# appending `:` (the `=session` form is valid for has-session but not for
+# pane-targeting commands).
+TARGET="=${MAIN_SESSION}:"
 if [ -n "$MAIN_PANE" ]; then
   PANE_SESSION=$(tmux display-message -p -t "$MAIN_PANE" '#S' 2>/dev/null || true)
   if [ "$PANE_SESSION" = "$MAIN_SESSION" ]; then
