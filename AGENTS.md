@@ -234,7 +234,7 @@ SCRIPTS=/home/jseto/programming-projects/ai-orchestrator/scripts
 
 | Script | Does |
 |---|---|
-| `sub-spawn.sh <task> <repo> [brief-file]` | Lease worktree (holder = task), base on `development`, write brief, boot `pi -n <task> "<kickoff>"` in tmux `pi-<task>` (kickoff passed as pi's initial message, so it cannot strand in the composer) with an isolated agent directory that excludes only notify/Telegram extensions and the pi-telegram package while retaining other resources, open a live viewer window in the invoking tmux session (skippable with `SUB_SPAWN_NO_VIEWER=1`), print all handles |
+| `sub-spawn.sh <task> <repo> [brief-file]` | Lease worktree (holder = task), base on `development`, write brief, boot `pi -n <task> --no-extensions "<kickoff>"` in tmux `pi-<task>` (kickoff passed as pi's initial message, so it cannot strand in the composer) with an isolated agent directory that provides no extensions or packages while retaining non-extension resources, open a live viewer window in the invoking tmux session (skippable with `SUB_SPAWN_NO_VIEWER=1`), print all handles |
 | `sub-status.sh <task> [repo] [lines]` | Lease + git state + pane tail + report tail for one subsession |
 | `sub-changes.sh <task> [repo]` | Read-only: status, commits not on `development`, diff stats |
 | `sub-send.sh <task> "message"` | Send a literal follow-up instruction to an existing child pi session and confirm it was submitted (re-types/retries `Enter` via `tmux_send_line`) |
@@ -338,14 +338,13 @@ while the orchestrator is driving it. **The main session's tmux pane/window must
 
 That one call leases a worktree (holder `fix-auth`), bases it on
 `development`, writes the brief to `tmp/pi-sub/tasks/fix-auth.md`, boots
-`pi -n fix-auth` in tmux session `pi-fix-auth` **with the tmux session rooted
-at the leased worktree**, using an isolated agent directory that excludes
-only notify/Telegram extensions and the pi-telegram package while retaining
-other resources, kicks the child off with the brief/report paths, and prints
+`pi -n fix-auth --no-extensions` in tmux session `pi-fix-auth` **with the tmux session rooted
+at the leased worktree**, using an isolated agent directory that provides no extensions or packages
+while retaining non-extension resources, kicks the child off with the brief/report paths, and prints
 task, worktree, branch, session, brief, and report handles. The child pi
 process therefore starts with the worktree as its current directory, not the
 main checkout. The kickoff is passed to pi as its **initial message
-argument** (`pi -n <task> "<kickoff>"`), not typed into the composer, so a
+argument** (`pi -n <task> --no-extensions "<kickoff>"`), not typed into the composer, so a
 keystroke lost while pi initializes can never leave the child sitting idle
 with an unsent prompt. (The raw commands behind it: `treehouse get
 --lease --lease-holder <task>`, fetch `origin/development`, create

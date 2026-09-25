@@ -92,22 +92,17 @@ task_file()    { printf '%s/%s/tasks/%s.md'    "$1" "$SCRATCH_DIR" "$2"; }
 report_file()  { printf '%s/%s/reports/%s.md'  "$1" "$SCRATCH_DIR" "$2"; }
 patch_file()   { printf '%s/%s/reports/%s.patch' "$1" "$SCRATCH_DIR" "$2"; }
 
-# Prepare an isolated Pi agent directory for a child. It preserves the user's
-# other settings, skills, prompts, themes, packages, and extensions, while
-# excluding the notify extension, Telegram-specific extensions, and the
-# pi-telegram package. The directory lives in the gitignored scratch dir of
-# the main checkout (outside the worktree) and is removed on retirement.
+# Prepare an isolated Pi agent directory for a child. It preserves non-extension
+# resources such as settings metadata, skills, prompts, and themes, but gives
+# the child no extensions or packages at all. The directory lives in the
+# gitignored scratch dir of the main checkout (outside the worktree) and is
+# removed on retirement.
 prepare_child_agent_dir() { # $1=destination dir; echoes dir
   local agent_dir=$1 source name
   rm -rf "$agent_dir"
   mkdir -p "$agent_dir/extensions"
-
-  if [ -f "$HOME/.pi/agent/settings.json" ]; then
-    jq 'if (.packages | type) == "array" then .packages |= map(select(if type == "string" then (test("pi-telegram"; "i") | not) else true end)) else . end' \
-      "$HOME/.pi/agent/settings.json" > "$agent_dir/settings.json"
-  else
-    printf '{}\n' > "$agent_dir/settings.json"
-  fi
+  # An empty package list prevents package-provided extensions from loading.
+  printf '{"packages":[]}\n' > "$agent_dir/settings.json"
 
   for name in auth.json keybindings.json models.json models-store.json trust.json AGENTS.md AGENTS.override.md SYSTEM.md APPEND_SYSTEM.md; do
     source="$HOME/.pi/agent/$name"
@@ -120,14 +115,6 @@ prepare_child_agent_dir() { # $1=destination dir; echoes dir
     if [ -e "$source" ] || [ -L "$source" ]; then
       ln -s "$source" "$agent_dir/$name"
     fi
-  done
-  for source in "$HOME/.pi/agent/extensions"/*; do
-    [ -e "$source" ] || [ -L "$source" ] || continue
-    name=$(basename "$source")
-    case "$name" in
-      notify*|telegram*) continue ;;
-    esac
-    ln -s "$source" "$agent_dir/extensions/$name"
   done
 
   printf '%s\n' "$agent_dir"

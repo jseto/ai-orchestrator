@@ -125,9 +125,7 @@ fi
 KICKOFF="Read the task brief at $TF and complete the full flow (atomic specs, TDD tests passing, code audit). Commit your work on the current branch ($BRANCH). Push your branch to origin and create a pull request against development using gh pr create. Write your report to $RF (what you changed, test results, PR link, notes). Do not use notify, ntfy, or any other external notification mechanism. When done or blocked, use only $SCRIPT_DIR/sub-report.sh $TASK \"DONE: <one-line summary> (PR #...)\" (or BLOCKED: <reason>)"
 
 # 5. Boot pi in a named tmux session, rooted in the worktree. The isolated
-#    agent directory retains all other user resources while excluding notify,
-#    Telegram-specific extensions, and the pi-telegram package. Other user
-#    extensions remain discoverable and enabled.
+#    agent directory deliberately provides no extensions or packages.
 CHILD_AGENT_DIR=$(prepare_child_agent_dir "$(scratch_root "$ROOT")/agent-dirs/$TASK")
 # The -e assignments are intentional: tmux servers may predate this shell's
 # environment, so inheriting the notice targets is not sufficient.
@@ -138,7 +136,7 @@ tmux new-session -d -s "$SESS" -c "$WT" \
   || die "could not create tmux session $SESS"
 SESS_STARTED=1
 sleep 0.5
-printf -v PI_LAUNCH '%q -n %q %q' "$PI_BIN" "$TASK" "$KICKOFF"
+printf -v PI_LAUNCH '%q -n %q --no-extensions %q' "$PI_BIN" "$TASK" "$KICKOFF"
 # tmux_send_line retries the Enter (and re-types the line) until the pane shows
 # it was picked up, so a dropped keystroke cannot leave the child idle.
 tmux_send_line "$SESS" "$PI_LAUNCH"
