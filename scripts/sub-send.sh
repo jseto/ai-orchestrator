@@ -17,8 +17,9 @@ SESS=$(session_of "$TASK")
 tmux has-session -t "$SESS" 2>/dev/null \
   || die "child session '$SESS' is not running"
 
-# Literal mode prevents tmux from interpreting punctuation in the prompt.
-tmux send-keys -t "$SESS" -l "$*"
-sleep 0.2
-tmux send-keys -t "$SESS" Enter
+# Type the instruction, then make sure it is actually submitted: tmux_send_line
+# re-types the text if it never landed and retries the Enter while the pane
+# stays frozen, so a dropped keystroke cannot strand the instruction in the
+# child's composer.
+tmux_send_line "$SESS" "$*"
 info "instruction sent to $SESS"

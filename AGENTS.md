@@ -234,10 +234,10 @@ SCRIPTS=/home/jseto/programming-projects/ai-orchestrator/scripts
 
 | Script | Does |
 |---|---|
-| `sub-spawn.sh <task> <repo> [brief-file]` | Lease worktree (holder = task), base on `development`, write brief, boot child `pi -n <task>` in tmux `pi-<task>` with an isolated agent directory that excludes only notify/Telegram extensions and the pi-telegram package while retaining other resources, kick off, open a live viewer window in the invoking tmux session (skippable with `SUB_SPAWN_NO_VIEWER=1`), print all handles |
+| `sub-spawn.sh <task> <repo> [brief-file]` | Lease worktree (holder = task), base on `development`, write brief, boot `pi -n <task> "<kickoff>"` in tmux `pi-<task>` (kickoff passed as pi's initial message, so it cannot strand in the composer) with an isolated agent directory that excludes only notify/Telegram extensions and the pi-telegram package while retaining other resources, open a live viewer window in the invoking tmux session (skippable with `SUB_SPAWN_NO_VIEWER=1`), print all handles |
 | `sub-status.sh <task> [repo] [lines]` | Lease + git state + pane tail + report tail for one subsession |
 | `sub-changes.sh <task> [repo]` | Read-only: status, commits not on `development`, diff stats |
-| `sub-send.sh <task> "message"` | Send a literal follow-up instruction to an existing child pi session |
+| `sub-send.sh <task> "message"` | Send a literal follow-up instruction to an existing child pi session and confirm it was submitted (re-types/retries `Enter` via `tmux_send_line`) |
 | `sub-report.sh <task> "message"` | Push a `[task] message` notice into `$MAIN_SESSION` (used by children) |
 | `sub-land.sh <task> [repo] [--patch]` | Read-only: what would be lost, commits to publish, push + `gh pr create` commands; `--patch` exports the work to `tmp/pi-sub/reports/<task>.patch` |
 | `sub-retire.sh <task> [repo] [--force] [--keep-files]` | Kill `pi-<task>`, `treehouse return --force`, and delete the task's scratch brief/report/patch; **refuses** when uncommitted or unpublished work would be destroyed (overridable with `--force`; `--keep-files` retains the scratch docs) |
@@ -344,14 +344,16 @@ only notify/Telegram extensions and the pi-telegram package while retaining
 other resources, kicks the child off with the brief/report paths, and prints
 task, worktree, branch, session, brief, and report handles. The child pi
 process therefore starts with the worktree as its current directory, not the
-main checkout. (The raw commands behind it: `treehouse get
+main checkout. The kickoff is passed to pi as its **initial message
+argument** (`pi -n <task> "<kickoff>"`), not typed into the composer, so a
+keystroke lost while pi initializes can never leave the child sitting idle
+with an unsent prompt. (The raw commands behind it: `treehouse get
 --lease --lease-holder <task>`, fetch `origin/development`, create
-`task/<task>` from the development ref, `tmux new -d -c <worktree>`, and two
-`tmux send-keys`.)
+`task/<task>` from the development ref, `tmux new -d -c <worktree>`, then
+`tmux_send_line` to launch `pi` with the kickoff.)
 
-**2. Hand follow-up work to the child** — `sub-spawn.sh` sends the kickoff;
-for later instructions use the helper (it sends text literally and submits
-with a separate `Enter`):
+**2. Hand follow-up work to the child** — `sub-spawn.sh` already sends the
+kickoff; for later instructions use the helper:
 
 ```bash
 "$SCRIPTS/sub-send.sh" fix-auth "Read the updated brief and continue the implementation"
@@ -359,6 +361,21 @@ with a separate `Enter`):
 
 For long or multiline task descriptions, do not fight shell/tmux quoting:
 write the task into a file and tell the child to read it.
+
+**Every prompt must be confirmed as submitted — never leave one parked in the
+composer.** A bare `tmux send-keys -l '…'` + `Enter` races the child's TUI:
+when the Enter lands while pi is mid-redraw (slow extension init, model
+switch) it is dropped and the text sits unsent in the input box — the child
+looks alive but never works. `sub-send.sh` and the spawn path go through the
+shared `tmux_send_line` helper
+([scripts/_sub-common.sh](file://scripts/_sub-common.sh)), which re-types the
+text when it did not appear and retries `Enter` while the pane stays frozen,
+so the instruction actually lands. When driving a child with raw
+`tmux send-keys` (or any other way), apply the same rule yourself: send the
+text first, send a separate `Enter` keystroke, then **verify** it was
+submitted (the pane shows the child working, or `sub-status.sh` shows
+progress) and press `Enter` again if the prompt is still sitting in the input
+buffer.
 
 **3. Monitor a child:**
 

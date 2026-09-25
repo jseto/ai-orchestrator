@@ -165,6 +165,47 @@ open_viewer_window() { # $1=task $2=child-session $3=invoking-pane (optional)
   printf '%s\n' "$target"
 }
 
+# Flatten a string to its non-whitespace characters. tmux wraps text to the
+# pane width, so a verbatim comparison would miss a message that landed.
+_flatten() { printf '%s' "$1" | tr -d '[:space:]'; }
+
+# Flattened text currently shown in a pane.
+_pane_flattened() { tmux capture-pane -t "$1" -p 2>/dev/null | tr -d '[:space:]' || true; }
+
+# Type a line into a tmux pane and make sure it actually runs.
+#
+# A bare `send-keys -l` + `Enter` races the target TUI's startup: pi can be
+# mid-redraw (slow extension init) when the Enter arrives, and the keystroke is
+# dropped, leaving the text parked in the composer. This helper is defensive on
+# both halves of the problem — it re-types when the text never appeared, and it
+# retries Enter while the pane content stays frozen (an unsubmitted line looks
+# exactly like a static screen). Extra Enters on an empty composer are
+# harmless; a silently unsent prompt is not.
+tmux_send_line() { # $1=tmux target $2=text [attempts] [settle seconds]
+  local target=$1 text=$2 attempts=${3:-4} settle=${4:-1}
+  local probe before after i
+  probe=$(_flatten "$text")
+  # The composer always shows the END of the text, so its tail survives the
+  # pane wrapping even when the head scrolls out of view.
+  probe=${probe: -60}
+  for (( i = 0; i < 2; i++ )); do
+    tmux send-keys -t "$target" -l "$text"
+    sleep 0.4
+    _pane_flattened "$target" | grep -qF -- "$probe" && break
+    warn "text not visible in $target yet; retyping"
+  done
+  before=$(_pane_flattened "$target")
+  for (( i = 0; i < attempts; i++ )); do
+    tmux send-keys -t "$target" Enter
+    sleep "$settle"
+    after=$(_pane_flattened "$target")
+    [ "$after" != "$before" ] && return 0
+    before=$after
+  done
+  warn "could not confirm that $target picked up the line; check the pane"
+  return 0
+}
+
 # Tail of the task's tmux pane (trailing blank lines dropped), or a note
 # when it isn't running.
 pane_tail() { # $1=task $2=lines

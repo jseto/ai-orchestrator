@@ -117,9 +117,17 @@ EOF
   warn "no brief given; created stub at $TF — fill it in now"
 fi
 
-# 4. Boot pi in a named tmux session, rooted in the worktree. The isolated
+# 4. Build the kickoff prompt. It is handed to pi as its initial message
+#    argument (absolute paths, since the child's cwd is the worktree but the
+#    brief lives in the main checkout) instead of being typed into the
+#    composer: a send-keys kickoff races pi's startup, and a dropped Enter
+#    leaves the prompt stranded in the input box — a child that never starts.
+KICKOFF="Read the task brief at $TF and complete the full flow (atomic specs, TDD tests passing, code audit). Commit your work on the current branch ($BRANCH). Push your branch to origin and create a pull request against development using gh pr create. Write your report to $RF (what you changed, test results, PR link, notes). Do not use notify, ntfy, or any other external notification mechanism. When done or blocked, use only $SCRIPT_DIR/sub-report.sh $TASK \"DONE: <one-line summary> (PR #...)\" (or BLOCKED: <reason>)"
+
+# 5. Boot pi in a named tmux session, rooted in the worktree. The isolated
 #    agent directory retains all other user resources while excluding notify,
-#    Telegram-specific extensions, and the pi-telegram package.
+#    Telegram-specific extensions, and the pi-telegram package. Other user
+#    extensions remain discoverable and enabled.
 CHILD_AGENT_DIR=$(prepare_child_agent_dir "$(scratch_root "$ROOT")/agent-dirs/$TASK")
 # The -e assignments are intentional: tmux servers may predate this shell's
 # environment, so inheriting the notice targets is not sufficient.
@@ -130,20 +138,12 @@ tmux new-session -d -s "$SESS" -c "$WT" \
   || die "could not create tmux session $SESS"
 SESS_STARTED=1
 sleep 0.5
-printf -v PI_BIN_TOKEN '%q' "$PI_BIN"
-# Child sessions use the isolated agent directory prepared above. Other user
-# extensions remain discoverable and enabled.
-tmux send-keys -t "$SESS" "$PI_BIN_TOKEN -n $TASK" Enter
+printf -v PI_LAUNCH '%q -n %q %q' "$PI_BIN" "$TASK" "$KICKOFF"
+# tmux_send_line retries the Enter (and re-types the line) until the pane shows
+# it was picked up, so a dropped keystroke cannot leave the child idle.
+tmux_send_line "$SESS" "$PI_LAUNCH"
 info "Waiting ${PI_BOOT_DELAY}s for pi to boot ..."
 sleep "$PI_BOOT_DELAY"
-
-# 5. Kick the child off with a single-line prompt (absolute paths, since the
-#    child's cwd is the worktree but the brief lives in the main checkout).
-KICKOFF="Read the task brief at $TF and complete the full flow (atomic specs, TDD tests passing, code audit). Commit your work on the current branch ($BRANCH). Push your branch to origin and create a pull request against development using gh pr create. Write your report to $RF (what you changed, test results, PR link, notes). Do not use notify, ntfy, or any other external notification mechanism. When done or blocked, use only $SCRIPT_DIR/sub-report.sh $TASK \"DONE: <one-line summary> (PR #...)\" (or BLOCKED: <reason>)"
-tmux send-keys -t "$SESS" -l "$KICKOFF"
-sleep 0.3
-tmux send-keys -t "$SESS" Enter
-sleep 1
 
 # 6. Live viewer pane in the invoking tmux window (falling back to a
 #    detached viewer window when there is no invoking pane). A viewer problem
