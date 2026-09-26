@@ -136,7 +136,15 @@ tmux new-session -d -s "$SESS" -c "$WT" \
   || die "could not create tmux session $SESS"
 SESS_STARTED=1
 sleep 0.5
-printf -v PI_LAUNCH '%q -n %q --no-extensions %q' "$PI_BIN" "$TASK" "$KICKOFF"
+# --approve resolves pi's project-trust decision for this process only
+# (docs/security.md: a command-line trust override applies before saved
+# decisions and the defaultProjectTrust setting). Every fresh worktree is a
+# folder pi has never seen, and the isolated child agent dir carries neither
+# an entry for it nor a defaultProjectTrust policy, so without --approve pi
+# stops on the folder-trust prompt and the kickoff — already handed over as
+# argv — is never processed. Unlike the manual Enter this replaces, it
+# persists no trust.json entry.
+printf -v PI_LAUNCH '%q -n %q --no-extensions --approve %q' "$PI_BIN" "$TASK" "$KICKOFF"
 # tmux_send_line retries the Enter (and re-types the line) until the pane shows
 # it was picked up, so a dropped keystroke cannot leave the child idle.
 tmux_send_line "$SESS" "$PI_LAUNCH"
