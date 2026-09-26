@@ -248,7 +248,7 @@ SCRIPTS=/home/jseto/programming-projects/ai-orchestrator/scripts
 | `sub-send.sh <task> "message"` | Send a literal follow-up instruction to an existing child pi session and confirm it was submitted (re-types/retries `Enter` via `tmux_send_line`) |
 | `sub-report.sh <task> "message"` | Push a `[task] message` notice into `$MAIN_SESSION` (used by children) |
 | `sub-land.sh <task> [repo] [--patch]` | Read-only: what would be lost, commits to publish, push + `gh pr create` commands; `--patch` exports the work to `tmp/pi-sub/reports/<task>.patch` |
-| `sub-retire.sh <task> [repo] [--force] [--keep-files] [--no-branch-cleanup]` | Kill `pi-<task>`, `treehouse return --force`, delete the task's scratch brief/report/patch, and best-effort clean up the task's merged local/remote branches (`--no-branch-cleanup` skips that); **refuses** when uncommitted or unpublished work would be destroyed (overridable with `--force`; `--keep-files` retains the scratch docs) |
+| `sub-retire.sh <task> [repo] [--force] [--keep-files] [--no-branch-cleanup]` | Kill `pi-<task>`, `treehouse return --force`, delete the task's scratch brief/report/patch, best-effort clean up the task's merged local/remote branches (`--no-branch-cleanup` skips that), and append a conversation-log entry recording the retirement with the child's session cost; **refuses** when uncommitted or unpublished work would be destroyed (overridable with `--force`; `--keep-files` retains the scratch docs) |
 | `sub-clean.sh [repo] [--yes]` | Sweep scratch docs for tasks with no lease and no running tmux session (dry-run unless `--yes`) |
 | `conversation-log.sh append <kind> <message>` | Append one entry to the weekly conversation/operation log in gitignored `logs/conversations/` (6-month retention sweep runs on every call; **logs are only read to resolve operational issues** — never during normal operation) |
 | `start-main.sh [--detach\|-d]` | Start the orchestrator's main pi session in tmux `pi-main` (name follows `$MAIN_SESSION`): create it detached at the main checkout of this repo, launch plain `$PI_BIN` (default `pi`, no child flags, submission verified via `tmux_send_line`), set the `main-pane-width 50%` / `main-vertical` convention, then attach — `--detach`/`-d` only starts or points at it; an existing session is reported (name + cwd) and re-attached, never restarted |
@@ -460,6 +460,12 @@ only when its PR is merged or — with no open PR — its tip is merged into
 problems are warnings, never failures; skip it with
 `sub-retire.sh <task> --no-branch-cleanup`. GitHub also deletes head branches
 automatically on merge (`delete_branch_on_merge` is enabled for this repo).
+
+Every successful retirement also appends an `operation` entry to the
+conversation log (`retired <task> | session cost: $0.1234`), with the cost
+summed from the child's own pi session records in its agent directory. A
+missing cost source or a failing log only warns — it never changes the
+retirement's outcome.
 
 ### Prompt template: spawn a subsession
 

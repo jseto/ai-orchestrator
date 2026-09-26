@@ -26,6 +26,9 @@ setup() {
   trap 'rm -rf "$SB"' EXIT
   export STUB_WT="$SB/wt" STUB_TASK="$TASK"
   export GH_PR_STATE=none GH_PR_FAIL=0
+  # Test hygiene: retirement now logs the session cost — sandbox the log so
+  # no test entry can reach the real conversation log.
+  export CONVERSATION_LOG_DIR="$SB/logs"
   mkdir -p "$SB/bin"
 
   cat > "$SB/bin/treehouse" <<'EOS'
