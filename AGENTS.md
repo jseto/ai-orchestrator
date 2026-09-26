@@ -240,7 +240,7 @@ SCRIPTS=/home/jseto/programming-projects/ai-orchestrator/scripts
 | `sub-send.sh <task> "message"` | Send a literal follow-up instruction to an existing child pi session and confirm it was submitted (re-types/retries `Enter` via `tmux_send_line`) |
 | `sub-report.sh <task> "message"` | Push a `[task] message` notice into `$MAIN_SESSION` (used by children) |
 | `sub-land.sh <task> [repo] [--patch]` | Read-only: what would be lost, commits to publish, push + `gh pr create` commands; `--patch` exports the work to `tmp/pi-sub/reports/<task>.patch` |
-| `sub-retire.sh <task> [repo] [--force] [--keep-files]` | Kill `pi-<task>`, `treehouse return --force`, and delete the task's scratch brief/report/patch; **refuses** when uncommitted or unpublished work would be destroyed (overridable with `--force`; `--keep-files` retains the scratch docs) |
+| `sub-retire.sh <task> [repo] [--force] [--keep-files] [--no-branch-cleanup]` | Kill `pi-<task>`, `treehouse return --force`, delete the task's scratch brief/report/patch, and best-effort clean up the task's merged local/remote branches (`--no-branch-cleanup` skips that); **refuses** when uncommitted or unpublished work would be destroyed (overridable with `--force`; `--keep-files` retains the scratch docs) |
 | `sub-clean.sh [repo] [--yes]` | Sweep scratch docs for tasks with no lease and no running tmux session (dry-run unless `--yes`) |
 | `worktree-setup.sh` | treehouse `post_create` hook: installs dependencies in each new worktree (lockfile-aware; see *Init scripts* below) |
 
@@ -435,6 +435,15 @@ the user about `--force`.
 It kills tmux session `pi-fix-auth` and returns the worktree. Manual
 equivalent: `tmux kill-session -t pi-fix-auth; treehouse return --force "$WT"`
 (resets the worktree!).
+
+A successful retirement also runs best-effort **branch cleanup**: the local
+`task/<name>` is deleted with `git branch -d` only when it is fully merged into
+the dev base (kept with a warning otherwise), and the remote branch is deleted
+only when its PR is merged or — with no open PR — its tip is merged into
+`origin/<dev-base>`; an open PR always keeps the remote branch. Deletion
+problems are warnings, never failures; skip it with
+`sub-retire.sh <task> --no-branch-cleanup`. GitHub also deletes head branches
+automatically on merge (`delete_branch_on_merge` is enabled for this repo).
 
 ### Prompt template: spawn a subsession
 
