@@ -131,6 +131,14 @@ worktree right before `get` hands it over:
 - **skips the JS install when `node_modules` exists and the lockfile is not
   newer** — a warm cache from a reused worktree is left alone (that cache is
   the point of the pool); it refreshes only when the lockfile changed;
+- **provisions `shellcheck`, a declared dependency of this repository**
+  (pinned `SHELLCHECK_VERSION` + per-platform sha256 in the script): the
+  official release binary is installed under `$XDG_DATA_HOME` and linked to
+  `~/.local/bin/shellcheck`, so `command -v shellcheck` works in every
+  worktree with no manual installs. It is idempotent (skips when the pinned
+  version is already in place), refreshes its own managed link when the pin
+  changes, and only warns — never overwrites — when a different shellcheck
+  occupies that path or when PATH resolves shellcheck elsewhere;
 - logs `[worktree-setup] …` to stderr (stdout stays clean for
   `get --lease`); a failing step is reported but does **not** fail the
   `get`. The strict package-manager fallback is forced after a failed frozen
