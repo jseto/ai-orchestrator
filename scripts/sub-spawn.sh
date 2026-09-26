@@ -5,6 +5,7 @@ set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=_sub-common.sh
+# shellcheck disable=SC1091  # followed with -x; plain runs must stay clean
 source "$SCRIPT_DIR/_sub-common.sh"
 
 # Capture the invoking pane before opening the child viewer pane. The pane ID
@@ -40,7 +41,7 @@ export MAIN_SESSION MAIN_PANE
 usage() { die "usage: ${0##*/} <task-name> <repo-dir> [brief-file]"; }
 
 need git tmux treehouse jq realpath
-[ "$#" -ge 2 ] && [ "$#" -le 3 ] || usage
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then usage; fi
 
 TASK=$1
 REPO=$2
@@ -65,9 +66,13 @@ SESS_STARTED=0
 cleanup_on_error() {
   local status=$?
   if [ "$status" -ne 0 ]; then
-    [ "$SESS_STARTED" = 1 ] && tmux kill-session -t "$SESS" 2>/dev/null || true
+    if [ "$SESS_STARTED" = 1 ]; then
+      tmux kill-session -t "$SESS" 2>/dev/null || true
+    fi
     [ -n "$CHILD_AGENT_DIR" ] && rm -rf "$CHILD_AGENT_DIR"
-    [ -n "$WT" ] && treehouse return --force "$WT" >/dev/null 2>&1 || true
+    if [ -n "$WT" ]; then
+      treehouse return --force "$WT" >/dev/null 2>&1 || true
+    fi
     warn "spawn failed; released the leased worktree"
   fi
   exit "$status"
@@ -138,8 +143,11 @@ SESS_STARTED=1
 sleep 0.5
 printf -v PI_LAUNCH '%q -n %q --no-extensions %q' "$PI_BIN" "$TASK" "$KICKOFF"
 # tmux_send_line retries the Enter (and re-types the line) until the pane shows
-# it was picked up, so a dropped keystroke cannot leave the child idle.
-tmux_send_line "$SESS" "$PI_LAUNCH"
+# it was picked up, so a dropped keystroke cannot leave the child idle. An
+# unconfirmed launch fails the spawn: reporting handles for a child that never
+# started is worse than a loud failure (the trap above releases everything).
+tmux_send_line "$SESS" "$PI_LAUNCH" \
+  || die "could not confirm the kickoff was submitted to $SESS — not reporting an idle child"
 info "Waiting ${PI_BOOT_DELAY}s for pi to boot ..."
 sleep "$PI_BOOT_DELAY"
 

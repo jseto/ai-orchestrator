@@ -395,8 +395,14 @@ buffer.
 "$SCRIPTS/sub-report.sh" fix-auth "DONE: migration done, 2 tests failing -> tmp/pi-sub/reports/fix-auth.md"
 ```
 
-which injects `[fix-auth] DONE: …` into the main session's input (raw
-equivalent: `tmux send-keys -t pi-main -l '…'` + `Enter`). The main session
+which injects `[fix-auth] DONE: …` into the main session's input through the
+shared verified send: `sub-report.sh` **verifies the notice was actually
+submitted** (it re-types the text and re-submits via `tmux_send_line`) and
+**fails loudly** — `ERROR:` on stderr, non-zero exit — when the main session
+is missing, tmux is unavailable, or the notice still cannot be confirmed,
+always pointing back at `tmp/pi-sub/reports/<task>.md`. It never reports a
+delivery that did not land and never suggests another notification
+mechanism. The main session
 also polls `sub-status.sh <task>` for children that do not push. Treat the
 report file as the source of truth and the push as a notification.
 

@@ -168,6 +168,13 @@ _pane_flattened() { tmux capture-pane -t "$1" -p 2>/dev/null | tr -d '[:space:]'
 # retries Enter while the pane content stays frozen (an unsubmitted line looks
 # exactly like a static screen). Extra Enters on an empty composer are
 # harmless; a silently unsent prompt is not.
+#
+# Returns 0 only when the pane content changed after an Enter — the line was
+# confirmed submitted. Returns 1 when it could not be confirmed: the text
+# never appeared after re-typing, the pane stayed frozen through every Enter
+# retry, or send-keys itself failed (target gone). Callers decide what an
+# unconfirmed send means for them; the sub-* scripts treat it as fatal so a
+# stranded line can never be reported as delivered.
 tmux_send_line() { # $1=tmux target $2=text [attempts] [settle seconds]
   local target=$1 text=$2 attempts=${3:-4} settle=${4:-1}
   local probe before after i
@@ -190,7 +197,7 @@ tmux_send_line() { # $1=tmux target $2=text [attempts] [settle seconds]
     before=$after
   done
   warn "could not confirm that $target picked up the line; check the pane"
-  return 0
+  return 1
 }
 
 # Tail of the task's tmux pane (trailing blank lines dropped), or a note
