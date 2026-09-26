@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Retire a subsession: kill its tmux session, return the worktree, and clean
-# up the task's branches (best effort; see --no-branch-cleanup).
+# Retire a subsession: kill its tmux session, return the worktree, clean up
+# the task's branches (best effort; see --no-branch-cleanup), and append the
+# retirement with its session cost to the conversation log.
 # Refuses (without --force) when unlanded work would be destroyed.
 set -euo pipefail
 
@@ -117,6 +118,44 @@ cleanup_branches() { # $1=branch
   return 0
 }
 
+# Total cost of the child's pi session records: the sum of the per-message
+# usage.cost.total values in <agent-dir>/sessions/**/*.jsonl. Those records
+# live in the per-task isolated agent directory, so the sum is attributable
+# to this child only. Echoes e.g. "0.1234"; echoes nothing when no (readable)
+# records exist — jq failing on a corrupt file yields nothing as well, so a
+# total is either right or absent, never wrong.
+session_cost() { # $1=agent dir
+  local dir=$1/sessions f total
+  local files=()
+  [ -d "$dir" ] || return 0
+  for f in "$dir"/*.jsonl "$dir"/*/*.jsonl; do
+    [ -f "$f" ] || continue
+    files+=("$f")
+  done
+  [ "${#files[@]}" -gt 0 ] || return 0
+  total=$(jq -s -r '.[] | .message? | objects | .usage? | objects
+                    | .cost? | objects | .total? | numbers' "${files[@]}" 2>/dev/null \
+    | awk '{ s += $1 } END { printf "%.4f", s }') || return 0
+  printf '%s' "$total"
+}
+
+# Best-effort: record the retirement (task + session cost) in the
+# conversation log. Every failure mode — script missing, append failing —
+# degrades to a warning; the retirement's exit status must never change.
+log_retirement() { # $1=cost label ("$0.1234" or "unknown")
+  local label=$1 script="$SCRIPT_DIR/conversation-log.sh" out
+  if [ ! -f "$script" ]; then
+    warn "conversation-log.sh not found; retirement of '$TASK' was not logged"
+    return 0
+  fi
+  if out=$("$script" append operation "retired $TASK | session cost: $label" 2>&1); then
+    info "logged retirement of '$TASK' in the conversation log (session cost: $label)"
+  else
+    warn "could not append retirement of '$TASK' to the conversation log: ${out%%$'\n'*}"
+  fi
+  return 0
+}
+
 # Safety: 'treehouse return --force' clean-resets the worktree.
 if [ "$FORCE" != 1 ]; then
   DIRTY=$(git -C "$WT" status --porcelain | wc -l)
@@ -137,6 +176,18 @@ if [ "$FORCE" != 1 ]; then
     info "then retry:    ${0##*/} $TASK --force   (only after publishing, or to discard)"
     exit 1
   fi
+fi
+
+# Session cost from the child's own pi session records. Captured now — after
+# the refusal checks, so a refused retirement logs nothing — and before the
+# tmux session is killed and the scratch cleanup deletes the agent directory
+# that holds the records (REQ-3). Missing source only warns (REQ-4).
+COST=$(session_cost "$(scratch_root "$ROOT")/agent-dirs/$TASK")
+if [ -n "$COST" ]; then
+  COST="\$$COST"   # label as it appears in the entry: $0.1234
+else
+  COST=unknown
+  warn "no readable session cost for '$TASK'; logging 'session cost: unknown'"
 fi
 
 if tmux has-session -t "$SESS" 2>/dev/null; then
@@ -180,3 +231,7 @@ else
 fi
 
 info "retired task '$TASK'"
+
+# Last step of a successful retirement: append the conversation-log entry.
+# Independent of (and no less best-effort than) the branch cleanup above.
+log_retirement "$COST"
