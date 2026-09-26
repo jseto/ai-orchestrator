@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+# Test suite for scripts/start-main.sh — one test per Gherkin scenario in
+# specs/start-main-script/start-main-script.feature ([REQ-n] traceable).
+#
+# Hermetic by construction: everything runs against an isolated tmux server
+# (TMUX_TMPDIR sandbox, TMUX/TMUX_PANE/MAIN_SESSION/PI_BIN unset), so the
+# suite can never touch a live `pi-main` session, and `PI_BIN` is faked with
+# marker shell scripts found first on PATH.
+#
+# Usage: bash tests/test-start-main.sh   (exit 0 = all green)
+set -uo pipefail
+
+TESTS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+START_DIR=$(cd "$TESTS_DIR/../scripts" && pwd)
+START="$START_DIR/start-main.sh"
+
+# The main checkout is the first entry of `git worktree list` — an
+# independent source for what "main checkout" means, unlike the
+# git-common-dir mapping the script itself uses.
+MAIN_WT=$(git -C "$START_DIR" worktree list --porcelain \
+  | awk '/^worktree /{sub(/^worktree /,""); print; exit}')
+
+TMP=$(mktemp -d)
+TESTBIN="$TMP/bin"
+mkdir -p "$TESTBIN" "$TMP/elsewhere"
+
+# Fake pi executables: echo a marker (so tmux_send_line sees the pane change
+# on Enter) and linger so the pane child is observable via ps.
+cat > "$TESTBIN/fake-pi" <<'EOF'
+#!/usr/bin/env bash
+echo "fake-pi launched"
+sleep 60
+EOF
+cat > "$TESTBIN/pi" <<'EOF'
+#!/usr/bin/env bash
+echo "fake default pi launched"
+sleep 60
+EOF
+chmod +x "$TESTBIN/fake-pi" "$TESTBIN/pi"
+PATH="$TESTBIN:$PATH"
+export PATH
+
+cleanup() {
+  env -u TMUX TMUX_TMPDIR="$TMP" tmux kill-server >/dev/null 2>&1 || true
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
+
+# Hermetic launch environment: the user's login profile prepends the real
+# nvm `pi` to PATH (which would shadow the fake and boot a real TUI inside
+# the test server), so give panes a scratch HOME with no profile and force
+# the server's global PATH to the fake bin. A bootstrap session keeps the
+# server alive while that is set (set-environment does not start a server),
+# and exit-empty off keeps the server — and its environment — afterwards.
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$TMP" tmux new-session -d \
+  -s env-bootstrap -c "$TMP" "sleep 60"
+mkdir -p "$TMP/home"
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$TMP" tmux set-option -s exit-empty off
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$TMP" tmux set-environment -g HOME "$TMP/home"
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$TMP" tmux set-environment -g PATH "$TESTBIN:$PATH"
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$TMP" tmux kill-session -t "=env-bootstrap" 2>/dev/null || true
+
+# --- harness ----------------------------------------------------------------
+
+PASSES=0; FAILS=0; SKIPS=0; CUR=""
+begin() { CUR="$1"; printf '[%s]\n' "$1"; }
+ok()   { PASSES=$((PASSES + 1)); printf '  ok   %s\n' "$*"; }
+bad()  { FAILS=$((FAILS + 1));  printf '  FAIL %s\n       %s\n' "$CUR" "$*"; }
+skip() { SKIPS=$((SKIPS + 1));  printf '  skip %s\n       %s\n' "$CUR" "$*"; }
+
+t_eq()        { if [ "$2" = "$3" ]; then ok "$1"; else bad "$1 — expected [$2], got [$3]"; fi; }
+t_nz_rc()     { if [ "$2" -ne 0 ]; then ok "$1"; else bad "$1 — expected non-zero exit, got 0"; fi; }
+t_has()       {
+  if [ -z "$2" ]; then bad "$1 — empty pattern (nothing to look for)"; return; fi
+  if grep -qF -- "$2" "$3" 2>/dev/null; then ok "$1"; else bad "$1 — [$2] not found in $3"; fi
+}
+t_not_in()    { case "$3" in *"$2"*) bad "$1 — [$2] unexpectedly in [$3]" ;; *) ok "$1" ;; esac; }
+t_not_matches() { if printf '%s' "$3" | grep -qE -- "$2"; then bad "$1 — [$2] unexpectedly matches [$3]"; else ok "$1"; fi; }
+
+# --- tmux / script access ---------------------------------------------------
+
+tux() { env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$TMP" tmux "$@"; }
+
+OUT="$TMP/out"; ERR="$TMP/err"; RC=0
+PI_VAL=""   # supplied as PI_BIN to the script; empty = unset (default pi)
+RUN_CWD=""  # invocation directory for run_start; empty = current dir
+
+run_start() { # <script args...>; sets RC, $OUT, $ERR
+  (
+    if [ -n "$RUN_CWD" ]; then cd "$RUN_CWD" || exit 1; fi
+    unset TMUX TMUX_PANE MAIN_PANE MAIN_SESSION
+    export TMUX_TMPDIR="$TMP"
+    if [ -n "$PI_VAL" ]; then export PI_BIN="$PI_VAL"; else unset PI_BIN; fi
+    "$START" "$@"
+  ) >"$OUT" 2>"$ERR"
+  RC=$?
+}
+
+has_main()     { tux has-session -t "=pi-main" 2>/dev/null; }
+fresh_session() { tux kill-session -t "=pi-main" 2>/dev/null || true; }
+# Pane/window lookups need the "=session:" target: a bare "=pi-main" means
+# "window named pi-main" for pane targets and silently resolves to nothing.
+pane_cwd()     { tux display-message -p -t "=pi-main:" '#{pane_current_path}' 2>/dev/null; }
+pane_pid()     { tux display-message -p -t "=pi-main:" '#{pane_pid}' 2>/dev/null; }
+pane_width()   { tux show-options -w -v -t "=pi-main:" main-pane-width 2>/dev/null; }
+pane_child_args() { ps --ppid "$(pane_pid)" -o args= --no-headers 2>/dev/null | tr '\n' ' '; }
+attached_sessions() { tux list-clients -F '#{client_session}' 2>/dev/null || true; }
+canon() { (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"; }
+
+wait_for_child() { # $1 = needle expected among the pane's children
+  local i
+  for ((i = 0; i < 40; i++)); do
+    pane_child_args | grep -qF -- "$1" && return 0
+    sleep 0.25
+  done
+  return 1
+}
+
+# --- scenarios --------------------------------------------------------------
+
+req_1() {
+  begin "[REQ-1] Start a detached session under the exact name pi-main"
+  fresh_session
+  PI_VAL=""
+  run_start --detach
+  t_eq "exits 0" 0 "$RC"
+  if has_main; then ok "session pi-main exists"; else bad "session pi-main does not exist"; fi
+  t_eq "session is named exactly pi-main (no auto-rename)" "pi-main" \
+    "$(tux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+}
+
+req_2() {
+  begin "[REQ-2] Launch the program named by PI_BIN without child arguments"
+  fresh_session
+  PI_VAL="$TESTBIN/fake-pi"
+  run_start --detach
+  t_eq "exits 0" 0 "$RC"
+  if wait_for_child "$TESTBIN/fake-pi"
+  then ok "pane runs PI_BIN"
+  else bad "pane child is not running PI_BIN (args: $(pane_child_args))"
+  fi
+  local args; args=$(pane_child_args)
+  t_not_in "launch carries no --no-extensions" "--no-extensions" "$args"
+  t_not_matches "launch carries no child -n flag" '(^|[[:space:]])-n([[:space:]]|$)' "$args"
+}
+
+req_3() {
+  begin "[REQ-3] Default to plain pi when PI_BIN is unset"
+  fresh_session
+  PI_VAL=""
+  run_start --detach
+  t_eq "exits 0" 0 "$RC"
+  if wait_for_child "$TESTBIN/pi"
+  then ok "pane runs the fake pi from PATH"
+  else bad "pane child is not running fake pi from PATH (args: $(pane_child_args))"
+  fi
+  local args; args=$(pane_child_args)
+  t_not_in "default launch carries no --no-extensions" "--no-extensions" "$args"
+}
+
+req_4() {
+  begin "[REQ-4] Root the session at the main checkout regardless of invocation cwd"
+  fresh_session
+  PI_VAL=""
+  RUN_CWD="$TMP/elsewhere"
+  run_start --detach
+  RUN_CWD=""
+  t_eq "exits 0 (run from unrelated dir)" 0 "$RC"
+  t_eq "session cwd = main checkout (unrelated invocation dir)" \
+    "$(canon "$MAIN_WT")" "$(canon "$(pane_cwd)")"
+  fresh_session
+  RUN_CWD="$START_DIR"
+  run_start --detach
+  RUN_CWD=""
+  t_eq "exits 0 (run from script location)" 0 "$RC"
+  t_eq "session cwd = main checkout (script location, a linked worktree when tests run from one)" \
+    "$(canon "$MAIN_WT")" "$(canon "$(pane_cwd)")"
+}
+
+req_5() {
+  begin "[REQ-5] Configure the new session's window for the orchestrator layout"
+  fresh_session
+  PI_VAL=""
+  run_start --detach
+  t_eq "exits 0" 0 "$RC"
+  t_eq "main-pane-width is 50%" "50%" "$(pane_width)"
+}
+
+req_6() {
+  begin "[REQ-6] Preserve an existing session and report where it is"
+  if ! has_main; then
+    PI_VAL=""
+    run_start --detach
+    t_eq "setup: session exists" 0 "$RC"
+  fi
+  local pid_before cwd_before
+  pid_before=$(pane_pid)
+  cwd_before=$(pane_cwd)
+  t_nz_rc "setup: session cwd is known" "${#cwd_before}"
+  # A marker only a *clobbering* implementation would overwrite.
+  tux set-window-option -t "=pi-main:" main-pane-width 70% 2>/dev/null
+  PI_VAL=""
+  run_start --detach
+  t_eq "exits 0" 0 "$RC"
+  t_eq "pane process not restarted" "$pid_before" "$(pane_pid)"
+  t_eq "window options untouched" "70%" "$(pane_width)"
+  t_has "reports that the session already exists" "already exists" "$OUT"
+  t_has "reports the session name" "pi-main" "$OUT"
+  t_has "reports where it is (cwd)" "$cwd_before" "$OUT"
+}
+
+req_7() {
+  begin "[REQ-7] Attach to the session by default"
+  if ! command -v script >/dev/null 2>&1; then
+    skip "script(1) not available — cannot drive the attach pty"
+    return 0
+  fi
+  if ! has_main; then
+    PI_VAL=""
+    run_start --detach
+    t_eq "setup: session started" 0 "$RC"
+  fi
+  if [ -n "$(attached_sessions)" ]
+  then bad "setup: no client expected before the run"
+  else ok "setup: no client attached before the run"
+  fi
+
+  env -u TMUX -u TMUX_PANE -u MAIN_SESSION -u PI_BIN \
+    TERM=xterm-256color TMUX_TMPDIR="$TMP" \
+    script -qec "$START" /dev/null >/dev/null 2>"$TMP/attach.err" &
+  local spid=$! attached="" i arc=""
+  for ((i = 0; i < 60; i++)); do
+    if attached_sessions | grep -Fxq -- "pi-main"; then attached=1; break; fi
+    kill -0 "$spid" 2>/dev/null || break
+    sleep 0.25
+  done
+  t_eq "client attached without flags" "1" "${attached:-}"
+  # Detach by session: `detach-client -a` acts on the *current* session,
+  # which a detached test process does not have (and `#{client_id}` is not a
+  # format in tmux 3.6), while -s targets every client of our session.
+  tux detach-client -s "=pi-main" >/dev/null 2>&1 || true
+  for ((i = 0; i < 40; i++)); do
+    if ! kill -0 "$spid" 2>/dev/null; then wait "$spid"; arc=$?; break; fi
+    sleep 0.25
+  done
+  if [ -z "$arc" ]; then
+    kill "$spid" 2>/dev/null || true
+    wait "$spid" 2>/dev/null || true
+    bad "script did not exit after the client detached"
+  else
+    t_eq "script exits 0 after the client detaches" 0 "$arc"
+  fi
+}
+
+req_8() {
+  begin "[REQ-8] Return without attaching when -d or --detach is given"
+  if ! has_main; then
+    PI_VAL=""
+    run_start --detach
+    t_eq "setup: session started" 0 "$RC"
+  fi
+  PI_VAL=""
+  run_start --detach
+  t_eq "long flag exits 0" 0 "$RC"
+  t_eq "long flag attaches no client" "" "$(attached_sessions)"
+  t_has "long flag message mentions detach" "detach" "$OUT"
+  PI_VAL=""
+  run_start -d
+  t_eq "short flag exits 0" 0 "$RC"
+  t_eq "short flag attaches no client" "" "$(attached_sessions)"
+  fresh_session
+  PI_VAL=""
+  run_start -d
+  t_eq "fresh start with -d exits 0" 0 "$RC"
+  t_eq "fresh start with -d attaches no client" "" "$(attached_sessions)"
+  if has_main
+  then ok "fresh start with -d created the session"
+  else bad "fresh start with -d did not create the session"
+  fi
+}
+
+req_9() {
+  begin "[REQ-9] Reject invalid invocation without side effects"
+  fresh_session
+  PI_VAL=""
+  run_start --bogus
+  t_nz_rc "unknown option fails" "$RC"
+  t_has "ERROR: usage on stderr" "ERROR:" "$ERR"
+  if has_main; then bad "unknown option created no session"; else ok "unknown option created no session"; fi
+  PI_VAL="$TMP/missing-pi-binary"
+  run_start --detach
+  t_nz_rc "unusable PI_BIN fails" "$RC"
+  t_has "ERROR on stderr" "ERROR:" "$ERR"
+  if has_main; then bad "unusable PI_BIN created no session"; else ok "unusable PI_BIN created no session"; fi
+  PI_VAL=""
+}
+
+# --- run --------------------------------------------------------------------
+
+main() {
+  printf '== start-main.sh suite (isolated tmux socket: %s)\n' "$TMP"
+  printf '   main checkout under test: %s\n\n' "$MAIN_WT"
+  req_1
+  req_2
+  req_3
+  req_4
+  req_5
+  req_6
+  req_7
+  req_8
+  req_9
+
+  begin "shellcheck gate"
+  if command -v shellcheck >/dev/null 2>&1; then
+    if shellcheck -x -P SCRIPTDIR "$START" "$TESTS_DIR/test-start-main.sh"
+    then ok "start-main.sh and the test suite are shellcheck-clean"
+    else bad "shellcheck reported issues"
+    fi
+  else
+    skip "shellcheck not available"
+  fi
+
+  printf '\n== results: %d passed, %d failed, %d skipped\n' "$PASSES" "$FAILS" "$SKIPS"
+  [ "$FAILS" -eq 0 ]
+}
+
+main "$@"

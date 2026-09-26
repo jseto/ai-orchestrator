@@ -242,6 +242,7 @@ SCRIPTS=/home/jseto/programming-projects/ai-orchestrator/scripts
 | `sub-land.sh <task> [repo] [--patch]` | Read-only: what would be lost, commits to publish, push + `gh pr create` commands; `--patch` exports the work to `tmp/pi-sub/reports/<task>.patch` |
 | `sub-retire.sh <task> [repo] [--force] [--keep-files]` | Kill `pi-<task>`, `treehouse return --force`, and delete the task's scratch brief/report/patch; **refuses** when uncommitted or unpublished work would be destroyed (overridable with `--force`; `--keep-files` retains the scratch docs) |
 | `sub-clean.sh [repo] [--yes]` | Sweep scratch docs for tasks with no lease and no running tmux session (dry-run unless `--yes`) |
+| `start-main.sh [--detach\|-d]` | Start the orchestrator's main pi session in tmux `pi-main` (name follows `$MAIN_SESSION`): create it detached at the main checkout of this repo, launch plain `$PI_BIN` (default `pi`, no child flags, submission verified via `tmux_send_line`), set the `main-pane-width 50%` / `main-vertical` convention, then attach — `--detach`/`-d` only starts or points at it; an existing session is reported (name + cwd) and re-attached, never restarted |
 | `worktree-setup.sh` | treehouse `post_create` hook: installs dependencies in each new worktree (lockfile-aware; see *Init scripts* below) |
 
 Details:
