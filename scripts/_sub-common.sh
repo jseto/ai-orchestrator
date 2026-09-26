@@ -98,11 +98,19 @@ patch_file()   { printf '%s/%s/reports/%s.patch' "$1" "$SCRATCH_DIR" "$2"; }
 # gitignored scratch dir of the main checkout (outside the worktree) and is
 # removed on retirement.
 prepare_child_agent_dir() { # $1=destination dir; echoes dir
-  local agent_dir=$1 source name
+  local agent_dir=$1 source name model_cfg
   rm -rf "$agent_dir"
   mkdir -p "$agent_dir/extensions"
   # An empty package list prevents package-provided extensions from loading.
-  printf '{"packages":[]}\n' > "$agent_dir/settings.json"
+  # Model defaults (defaultProvider/defaultModel/enabledModels) are inherited
+  # from the global settings: without them the child has no configured default
+  # and pi falls through to its built-in per-provider fallback map, landing on
+  # an arbitrary model (e.g. google/gemini-3.1-pro-preview) whenever the
+  # target repo has no project-level .pi/settings.json.
+  model_cfg=$(jq -c '{defaultProvider, defaultModel, enabledModels}
+    | with_entries(select(.value != null))' "$HOME/.pi/agent/settings.json" 2>/dev/null || printf '{}')
+  jq -cn --argjson cfg "$model_cfg" '$cfg + {packages: []}' > "$agent_dir/settings.json" 2>/dev/null \
+    || printf '{"packages":[]}\n' > "$agent_dir/settings.json" # jq absent → never leave an empty file
 
   for name in auth.json keybindings.json models.json models-store.json trust.json AGENTS.md AGENTS.override.md SYSTEM.md APPEND_SYSTEM.md; do
     source="$HOME/.pi/agent/$name"
